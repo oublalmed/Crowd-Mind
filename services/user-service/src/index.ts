@@ -27,7 +27,7 @@ app.get('/health', async (_req, res) => {
   });
 });
 
-app.use(userRouter);
+app.use('/users', userRouter);
 
 app.use((_req, res) => {
   res.status(404).json({

@@ -1,13 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
-import { config } from '../config';
-
-interface JwtPayload {
-  userId: string;
-  email?: string;
-  iat?: number;
-  exp?: number;
-}
+import { AuthService, AuthError } from '../services/auth.service';
 
 declare global {
   namespace Express {
@@ -18,6 +10,11 @@ declare global {
   }
 }
 
+/**
+ * Express middleware that extracts a Bearer token from the Authorization header,
+ * verifies it using AuthService.verifyAccessToken(), and attaches userId and email
+ * to the request object.
+ */
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization;
 
@@ -48,28 +45,17 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   const token = parts[1];
 
   try {
-    const decoded = jwt.verify(token, config.jwtSecret) as JwtPayload;
-
-    if (!decoded.userId) {
-      res.status(401).json({
-        success: false,
-        error: {
-          code: 'UNAUTHORIZED',
-          message: 'Invalid token payload',
-        },
-      });
-      return;
-    }
-
-    req.userId = decoded.userId;
+    const payload = AuthService.verifyAccessToken(token);
+    req.userId = payload.userId;
+    req.email = payload.email;
     next();
   } catch (err) {
-    if (err instanceof jwt.TokenExpiredError) {
-      res.status(401).json({
+    if (err instanceof AuthError) {
+      res.status(err.statusCode).json({
         success: false,
         error: {
-          code: 'TOKEN_EXPIRED',
-          message: 'Access token has expired',
+          code: err.code,
+          message: err.message,
         },
       });
       return;

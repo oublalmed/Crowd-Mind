@@ -8,6 +8,7 @@ import {
   Platform,
   ScrollView,
   TouchableOpacity,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,6 +16,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { colors, spacing, typography, borderRadius } from '../../theme';
 import Button from '../../components/common/Button';
+import { useAuthStore } from '../../store/authStore';
 import type { AuthStackParamList } from '../../navigation/AuthStack';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'Register'>;
@@ -29,9 +31,18 @@ const RegisterScreen: React.FC<Props> = ({ navigation }) => {
   const [agreeToTerms, setAgreeToTerms] = useState(false);
 
   const handleRegister = async () => {
+    if (password !== confirmPassword) {
+      Alert.alert('Registration Failed', 'Passwords do not match');
+      return;
+    }
     setIsLoading(true);
-    // TODO: Implement registration logic via useAuth hook
-    setTimeout(() => setIsLoading(false), 1500);
+    try {
+      await useAuthStore.getState().register(email, username, username, password);
+    } catch (error: any) {
+      Alert.alert('Registration Failed', error.message || 'Please try again');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (

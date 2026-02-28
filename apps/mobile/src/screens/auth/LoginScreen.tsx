@@ -8,6 +8,7 @@ import {
   Platform,
   ScrollView,
   TouchableOpacity,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,6 +16,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { colors, spacing, typography, borderRadius } from '../../theme';
 import Button from '../../components/common/Button';
+import { useAuthStore } from '../../store/authStore';
 import type { AuthStackParamList } from '../../navigation/AuthStack';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'Login'>;
@@ -27,8 +29,13 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
 
   const handleLogin = async () => {
     setIsLoading(true);
-    // TODO: Implement login logic via useAuth hook
-    setTimeout(() => setIsLoading(false), 1500);
+    try {
+      await useAuthStore.getState().login(email, password);
+    } catch (error: any) {
+      Alert.alert('Login Failed', error.message || 'Please try again');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleGoogleSignIn = async () => {
