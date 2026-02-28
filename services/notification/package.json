@@ -1,0 +1,43 @@
+{
+  "name": "@crowd-mind/notification",
+  "version": "1.0.0",
+  "description": "Notification microservice for Crowd Mind mobile game platform",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "lint": "eslint src --ext .ts",
+    "test": "jest --passWithNoTests",
+    "migrate": "node dist/db/migrate.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "ioredis": "^5.3.2",
+    "pg": "^8.11.3",
+    "uuid": "^9.0.0",
+    "dotenv": "^16.3.1",
+    "bullmq": "^5.1.0",
+    "firebase-admin": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/cors": "^2.8.17",
+    "@types/pg": "^8.10.9",
+    "@types/uuid": "^9.0.7",
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.2",
+    "ts-node-dev": "^2.0.0",
+    "jest": "^29.7.0",
+    "@types/jest": "^29.5.11",
+    "ts-jest": "^29.1.1",
+    "eslint": "^8.55.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

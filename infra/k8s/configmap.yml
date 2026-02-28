@@ -1,0 +1,84 @@
+# =============================================================================
+# Kubernetes — Shared ConfigMap
+# =============================================================================
+# Non-sensitive configuration shared across all Crowd-Mind services.
+# Service discovery URLs, feature flags, and common settings.
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crowd-mind-config
+  namespace: crowd-mind
+  labels:
+    app.kubernetes.io/name: crowd-mind-config
+    app.kubernetes.io/part-of: crowd-mind
+data:
+  # ---------------------------------------------------------------------------
+  # General
+  # ---------------------------------------------------------------------------
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+
+  # ---------------------------------------------------------------------------
+  # Service Discovery — Internal cluster URLs
+  # ---------------------------------------------------------------------------
+  AUTH_SERVICE_URL: "http://auth-service.crowd-mind.svc.cluster.local"
+  USER_SERVICE_URL: "http://user-service.crowd-mind.svc.cluster.local"
+  GAME_ENGINE_URL: "http://game-engine.crowd-mind.svc.cluster.local"
+  GAME_ENGINE_WS_URL: "ws://game-engine.crowd-mind.svc.cluster.local:8080"
+  VOTING_SERVICE_URL: "http://voting-service.crowd-mind.svc.cluster.local"
+  VOTING_SERVICE_WS_URL: "ws://voting-service.crowd-mind.svc.cluster.local:8081"
+  LEADERBOARD_URL: "http://leaderboard.crowd-mind.svc.cluster.local"
+  PAYMENT_SERVICE_URL: "http://payment-service.crowd-mind.svc.cluster.local"
+  ANALYTICS_URL: "http://analytics.crowd-mind.svc.cluster.local"
+  NOTIFICATION_URL: "http://notification.crowd-mind.svc.cluster.local"
+
+  # ---------------------------------------------------------------------------
+  # Service Ports
+  # ---------------------------------------------------------------------------
+  AUTH_SERVICE_PORT: "3000"
+  USER_SERVICE_PORT: "3000"
+  GAME_ENGINE_PORT: "3000"
+  GAME_ENGINE_WS_PORT: "8080"
+  VOTING_SERVICE_PORT: "3000"
+  VOTING_SERVICE_WS_PORT: "8081"
+  LEADERBOARD_PORT: "3000"
+  PAYMENT_SERVICE_PORT: "3000"
+  ANALYTICS_PORT: "3000"
+  NOTIFICATION_PORT: "3000"
+  API_GATEWAY_PORT: "8000"
+
+  # ---------------------------------------------------------------------------
+  # Database
+  # ---------------------------------------------------------------------------
+  POSTGRES_HOST: "postgres.crowd-mind.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "crowdmind"
+
+  # ---------------------------------------------------------------------------
+  # Redis
+  # ---------------------------------------------------------------------------
+  REDIS_HOST: "redis.crowd-mind.svc.cluster.local"
+  REDIS_PORT: "6379"
+  REDIS_URL: "redis://redis.crowd-mind.svc.cluster.local:6379"
+
+  # ---------------------------------------------------------------------------
+  # External URLs
+  # ---------------------------------------------------------------------------
+  API_BASE_URL: "https://api.crowdmind.io"
+  WS_BASE_URL: "wss://ws.crowdmind.io"
+
+  # ---------------------------------------------------------------------------
+  # Game Configuration
+  # ---------------------------------------------------------------------------
+  MAX_PLAYERS_PER_ROOM: "20"
+  VOTING_TIMEOUT_SECONDS: "30"
+  ROUND_DURATION_SECONDS: "120"
+  MIN_PLAYERS_TO_START: "4"
+
+  # ---------------------------------------------------------------------------
+  # Rate Limiting
+  # ---------------------------------------------------------------------------
+  RATE_LIMIT_WINDOW_MS: "60000"
+  RATE_LIMIT_MAX_REQUESTS: "100"

@@ -1,0 +1,161 @@
+# =============================================================================
+# Kubernetes — PostgreSQL (StatefulSet + Service + ConfigMap + Secret)
+# =============================================================================
+# StatefulSet ensures stable network identities and persistent storage.
+# For production, consider using a managed service (RDS) or an operator
+# (e.g., CloudNativePG, Zalando Postgres Operator).
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# ConfigMap — PostgreSQL configuration
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: crowd-mind
+  labels:
+    app: postgres
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: crowd-mind
+data:
+  POSTGRES_DB: crowdmind
+  POSTGRES_USER: crowdmind
+  # Custom PostgreSQL settings for performance tuning
+  POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+
+---
+# ---------------------------------------------------------------------------
+# Secret — PostgreSQL credentials (CHANGE_ME in production!)
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  namespace: crowd-mind
+  labels:
+    app: postgres
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: crowd-mind
+  annotations:
+    description: "PostgreSQL credentials — CHANGE_ME: replace with real secrets"
+type: Opaque
+data:
+  # Base64 encoded: "CHANGE_ME_postgres_password"
+  POSTGRES_PASSWORD: Q0hBTkdFX01FX3Bvc3RncmVzX3Bhc3N3b3Jk
+
+---
+# ---------------------------------------------------------------------------
+# Service — PostgreSQL (headless for StatefulSet)
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: crowd-mind
+  labels:
+    app: postgres
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: crowd-mind
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless service for StatefulSet
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP
+
+---
+# ---------------------------------------------------------------------------
+# StatefulSet — PostgreSQL
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: crowd-mind
+  labels:
+    app: postgres
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: crowd-mind
+    app.kubernetes.io/component: database
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+        app.kubernetes.io/name: postgres
+    spec:
+      securityContext:
+        runAsNonRoot: false   # PostgreSQL requires root for initial setup
+        fsGroup: 999          # postgres group
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          envFrom:
+            - configMapRef:
+                name: postgres-config
+            - secretRef:
+                name: postgres-secret
+          # Liveness: can PostgreSQL accept connections?
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - crowdmind
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          # Readiness: is PostgreSQL ready to serve queries?
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - crowdmind
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+              subPath: pgdata
+  # PersistentVolumeClaim template — 10Gi storage
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+        labels:
+          app: postgres
+          app.kubernetes.io/name: postgres
+          app.kubernetes.io/part-of: crowd-mind
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 10Gi
+        storageClassName: gp3

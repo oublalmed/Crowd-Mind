@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build
+dist/
+build/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage/
+.nyc_output/
+
+# Docker
+docker-compose.override.yml
+
+# React Native
+apps/mobile/ios/Pods/
+apps/mobile/android/.gradle/
+apps/mobile/android/app/build/
+*.jks
+*.keystore
+
+# Expo
+apps/mobile/.expo/
+apps/mobile/web-build/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/*.tfplan
+
+# Secrets
+*.pem
+*.key
+credentials.json

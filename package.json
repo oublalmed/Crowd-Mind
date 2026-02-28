@@ -1,0 +1,24 @@
+{
+  "name": "crowd-mind",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Free-to-Play mobile multiplayer social deduction game",
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "docker-compose up -d",
+    "dev:down": "docker-compose down",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:ci": "npm run test:ci --workspaces --if-present",
+    "clean": "npm run clean --workspaces --if-present && rm -rf node_modules"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

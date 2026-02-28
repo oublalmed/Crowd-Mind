@@ -1,0 +1,388 @@
+# =============================================================================
+# Crowd-Mind — Local Development Environment
+# =============================================================================
+# Usage:
+#   docker-compose up -d            # Start all services
+#   docker-compose up -d postgres   # Start only PostgreSQL
+#   docker-compose logs -f <svc>    # Tail logs for a specific service
+#   docker-compose down -v          # Stop and remove volumes
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Infrastructure: Databases & Caches
+  # ---------------------------------------------------------------------------
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: crowdmind-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crowdmind}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crowdmind_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-crowdmind}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crowdmind}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - crowdmind
+    env_file:
+      - .env
+
+  redis:
+    image: redis:7-alpine
+    container_name: crowdmind-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - crowdmind
+
+  mongodb:
+    image: mongo:7
+    container_name: crowdmind-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-crowdmind}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-crowdmind_dev}
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-crowdmind_analytics}
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - crowdmind
+
+  # ---------------------------------------------------------------------------
+  # Application Services
+  # ---------------------------------------------------------------------------
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.service
+      args:
+        SERVICE_NAME: auth-service
+    container_name: crowdmind-auth-service
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      SERVICE_NAME: auth-service
+      PORT: 3000
+      NODE_ENV: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-crowdmind}:${POSTGRES_PASSWORD:-crowdmind_dev}@postgres:5432/${POSTGRES_DB:-crowdmind}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    networks:
+      - crowdmind
+
+  user-service:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.service
+      args:
+        SERVICE_NAME: user-service
+    container_name: crowdmind-user-service
+    restart: unless-stopped
+    ports:
+      - "3002:3000"
+    environment:
+      SERVICE_NAME: user-service
+      PORT: 3000
+      NODE_ENV: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-crowdmind}:${POSTGRES_PASSWORD:-crowdmind_dev}@postgres:5432/${POSTGRES_DB:-crowdmind}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    networks:
+      - crowdmind
+
+  game-engine:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.service
+      args:
+        SERVICE_NAME: game-engine
+    container_name: crowdmind-game-engine
+    restart: unless-stopped
+    ports:
+      - "3003:3000"
+      - "8080:8080"
+    environment:
+      SERVICE_NAME: game-engine
+      PORT: 3000
+      WS_PORT: 8080
+      NODE_ENV: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-crowdmind}:${POSTGRES_PASSWORD:-crowdmind_dev}@postgres:5432/${POSTGRES_DB:-crowdmind}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    networks:
+      - crowdmind
+
+  voting-service:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.service
+      args:
+        SERVICE_NAME: voting-service
+    container_name: crowdmind-voting-service
+    restart: unless-stopped
+    ports:
+      - "3004:3000"
+      - "8081:8081"
+    environment:
+      SERVICE_NAME: voting-service
+      PORT: 3000
+      WS_PORT: 8081
+      NODE_ENV: development
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    networks:
+      - crowdmind
+
+  leaderboard:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.service
+      args:
+        SERVICE_NAME: leaderboard
+    container_name: crowdmind-leaderboard
+    restart: unless-stopped
+    ports:
+      - "3005:3000"
+    environment:
+      SERVICE_NAME: leaderboard
+      PORT: 3000
+      NODE_ENV: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-crowdmind}:${POSTGRES_PASSWORD:-crowdmind_dev}@postgres:5432/${POSTGRES_DB:-crowdmind}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    networks:
+      - crowdmind
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.service
+      args:
+        SERVICE_NAME: payment-service
+    container_name: crowdmind-payment-service
+    restart: unless-stopped
+    ports:
+      - "3006:3000"
+    environment:
+      SERVICE_NAME: payment-service
+      PORT: 3000
+      NODE_ENV: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-crowdmind}:${POSTGRES_PASSWORD:-crowdmind_dev}@postgres:5432/${POSTGRES_DB:-crowdmind}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    networks:
+      - crowdmind
+
+  analytics:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.service
+      args:
+        SERVICE_NAME: analytics
+    container_name: crowdmind-analytics
+    restart: unless-stopped
+    ports:
+      - "3007:3000"
+    environment:
+      SERVICE_NAME: analytics
+      PORT: 3000
+      NODE_ENV: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-crowdmind}:${POSTGRES_PASSWORD:-crowdmind_dev}@postgres:5432/${POSTGRES_DB:-crowdmind}
+      REDIS_URL: redis://redis:6379
+      MONGO_URL: mongodb://${MONGO_USER:-crowdmind}:${MONGO_PASSWORD:-crowdmind_dev}@mongodb:27017/${MONGO_DB:-crowdmind_analytics}?authSource=admin
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    networks:
+      - crowdmind
+
+  notification:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.service
+      args:
+        SERVICE_NAME: notification
+    container_name: crowdmind-notification
+    restart: unless-stopped
+    ports:
+      - "3008:3000"
+    environment:
+      SERVICE_NAME: notification
+      PORT: 3000
+      NODE_ENV: development
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://${POSTGRES_USER:-crowdmind}:${POSTGRES_PASSWORD:-crowdmind_dev}@postgres:5432/${POSTGRES_DB:-crowdmind}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    networks:
+      - crowdmind
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.service
+      args:
+        SERVICE_NAME: api-gateway
+    container_name: crowdmind-api-gateway
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+      - "8443:8443"
+    environment:
+      SERVICE_NAME: api-gateway
+      PORT: 8000
+      HTTPS_PORT: 8443
+      NODE_ENV: development
+      AUTH_SERVICE_URL: http://auth-service:3000
+      USER_SERVICE_URL: http://user-service:3000
+      GAME_ENGINE_URL: http://game-engine:3000
+      GAME_ENGINE_WS_URL: ws://game-engine:8080
+      VOTING_SERVICE_URL: http://voting-service:3000
+      VOTING_SERVICE_WS_URL: ws://voting-service:8081
+      LEADERBOARD_URL: http://leaderboard:3000
+      PAYMENT_SERVICE_URL: http://payment-service:3000
+      ANALYTICS_URL: http://analytics:3000
+      NOTIFICATION_URL: http://notification:3000
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - auth-service
+      - user-service
+      - game-engine
+      - voting-service
+      - leaderboard
+      - payment-service
+      - analytics
+      - notification
+    env_file:
+      - .env
+    networks:
+      - crowdmind
+
+  # ---------------------------------------------------------------------------
+  # Observability
+  # ---------------------------------------------------------------------------
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: crowdmind-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infra/docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    networks:
+      - crowdmind
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: crowdmind-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - crowdmind
+
+# ---------------------------------------------------------------------------
+# Volumes
+# ---------------------------------------------------------------------------
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  mongodb_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+# ---------------------------------------------------------------------------
+# Networks
+# ---------------------------------------------------------------------------
+networks:
+  crowdmind:
+    driver: bridge
+    name: crowdmind

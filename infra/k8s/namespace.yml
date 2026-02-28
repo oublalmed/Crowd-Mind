@@ -1,0 +1,12 @@
+# =============================================================================
+# Kubernetes Namespace — Crowd-Mind
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: crowd-mind
+  labels:
+    app.kubernetes.io/part-of: crowd-mind
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: "Crowd-Mind mobile game platform namespace"

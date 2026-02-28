@@ -1,0 +1,80 @@
+# =============================================================================
+# Multi-stage Dockerfile for Crowd-Mind Node.js TypeScript microservices
+# =============================================================================
+# Usage:
+#   docker build -f infra/docker/Dockerfile.service -t crowd-mind/<service> \
+#     --build-arg SERVICE_NAME=<service> .
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Stage 1: Builder — install dependencies and compile TypeScript
+# ---------------------------------------------------------------------------
+FROM node:20-alpine AS builder
+
+# Build argument to specify which service to build
+ARG SERVICE_NAME
+ENV SERVICE_NAME=${SERVICE_NAME}
+
+WORKDIR /app
+
+# Copy root workspace files first for dependency resolution
+COPY package.json package-lock.json* ./
+
+# Copy the shared package (used by all services)
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/shared/ ./packages/shared/
+
+# Copy the target service package.json for dependency caching
+COPY services/${SERVICE_NAME}/package.json ./services/${SERVICE_NAME}/
+
+# Install all dependencies (clean install for reproducibility)
+RUN npm ci --workspace=services/${SERVICE_NAME} --include-workspace-root
+
+# Copy the target service source code
+COPY services/${SERVICE_NAME}/ ./services/${SERVICE_NAME}/
+
+# Build the shared package first, then the service
+RUN npm run build --workspace=packages/shared --if-present && \
+    npm run build --workspace=services/${SERVICE_NAME}
+
+# ---------------------------------------------------------------------------
+# Stage 2: Runner — minimal production image
+# ---------------------------------------------------------------------------
+FROM node:20-alpine AS runner
+
+# Metadata labels
+LABEL maintainer="Crowd-Mind Team"
+LABEL org.opencontainers.image.source="https://github.com/crowd-mind/crowd-mind"
+LABEL org.opencontainers.image.description="Crowd-Mind microservice"
+
+ARG SERVICE_NAME
+ENV SERVICE_NAME=${SERVICE_NAME}
+ENV NODE_ENV=production
+
+WORKDIR /app
+
+# Security: create a non-root user and group
+RUN addgroup --system --gid 1001 crowdmind && \
+    adduser --system --uid 1001 --ingroup crowdmind appuser
+
+# Copy built artifacts and production dependencies from builder
+COPY --from=builder --chown=appuser:crowdmind /app/services/${SERVICE_NAME}/dist ./dist
+COPY --from=builder --chown=appuser:crowdmind /app/services/${SERVICE_NAME}/node_modules ./node_modules
+COPY --from=builder --chown=appuser:crowdmind /app/services/${SERVICE_NAME}/package.json ./package.json
+
+# Copy shared package if needed at runtime
+COPY --from=builder --chown=appuser:crowdmind /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder --chown=appuser:crowdmind /app/packages/shared/package.json ./packages/shared/package.json
+
+# Expose the default service port (override at runtime if needed)
+EXPOSE 3000
+
+# Drop to non-root user
+USER appuser
+
+# Health check — services expose GET /health
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+
+# Start the compiled service
+CMD ["node", "dist/index.js"]

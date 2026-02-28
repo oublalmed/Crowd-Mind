@@ -1,0 +1,219 @@
+# =============================================================================
+# Kubernetes — Ingress (nginx Ingress Controller)
+# =============================================================================
+# Routes external traffic to internal services. WebSocket upgrade headers are
+# enabled for game-engine and voting-service paths.
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: crowd-mind-ingress
+  namespace: crowd-mind
+  labels:
+    app.kubernetes.io/name: crowd-mind-ingress
+    app.kubernetes.io/part-of: crowd-mind
+  annotations:
+    # Ingress class
+    kubernetes.io/ingress.class: nginx
+
+    # TLS / HTTPS
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+
+    # WebSocket support for game-engine and voting-service
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/connection-proxy-header: "keep-alive"
+
+    # Rate limiting
+    nginx.ingress.kubernetes.io/limit-rps: "50"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"
+
+    # Request body size (for avatar uploads, etc.)
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+
+    # CORS headers
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type, X-Request-ID"
+
+    # Security headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.crowdmind.io
+        - ws.crowdmind.io
+      secretName: crowdmind-tls
+  rules:
+    # -------------------------------------------------------------------------
+    # API routes — api.crowdmind.io
+    # -------------------------------------------------------------------------
+    - host: api.crowdmind.io
+      http:
+        paths:
+          # Auth service
+          - path: /api/auth
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  name: http
+
+          # User service
+          - path: /api/users
+            pathType: Prefix
+            backend:
+              service:
+                name: user-service
+                port:
+                  name: http
+
+          # Game engine (HTTP API)
+          - path: /api/games
+            pathType: Prefix
+            backend:
+              service:
+                name: game-engine
+                port:
+                  name: http
+
+          # Voting service (HTTP API)
+          - path: /api/votes
+            pathType: Prefix
+            backend:
+              service:
+                name: voting-service
+                port:
+                  name: http
+
+          # Leaderboard service
+          - path: /api/leaderboard
+            pathType: Prefix
+            backend:
+              service:
+                name: leaderboard
+                port:
+                  name: http
+
+          # Payment service
+          - path: /api/payments
+            pathType: Prefix
+            backend:
+              service:
+                name: payment-service
+                port:
+                  name: http
+
+          # Analytics service
+          - path: /api/analytics
+            pathType: Prefix
+            backend:
+              service:
+                name: analytics
+                port:
+                  name: http
+
+          # Notification service
+          - path: /api/notifications
+            pathType: Prefix
+            backend:
+              service:
+                name: notification
+                port:
+                  name: http
+
+    # -------------------------------------------------------------------------
+    # WebSocket routes — ws.crowdmind.io
+    # -------------------------------------------------------------------------
+    - host: ws.crowdmind.io
+      http:
+        paths:
+          # Game engine WebSocket
+          - path: /game
+            pathType: Prefix
+            backend:
+              service:
+                name: game-engine
+                port:
+                  name: websocket
+
+          # Voting service WebSocket
+          - path: /voting
+            pathType: Prefix
+            backend:
+              service:
+                name: voting-service
+                port:
+                  name: websocket
+
+---
+# =============================================================================
+# Separate Ingress for WebSocket paths with sticky session annotations
+# =============================================================================
+# WebSocket connections require session affinity so the upgrade handshake and
+# subsequent frames hit the same backend pod.
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: crowd-mind-ingress-ws
+  namespace: crowd-mind
+  labels:
+    app.kubernetes.io/name: crowd-mind-ingress-ws
+    app.kubernetes.io/part-of: crowd-mind
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+
+    # WebSocket-specific settings
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+
+    # Enable WebSocket upgrade
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+
+    # Sticky sessions via cookie
+    nginx.ingress.kubernetes.io/affinity: cookie
+    nginx.ingress.kubernetes.io/affinity-mode: persistent
+    nginx.ingress.kubernetes.io/session-cookie-name: CROWDMIND_WS_AFFINITY
+    nginx.ingress.kubernetes.io/session-cookie-expires: "3600"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "3600"
+    nginx.ingress.kubernetes.io/session-cookie-samesite: Strict
+    nginx.ingress.kubernetes.io/session-cookie-secure: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - ws.crowdmind.io
+      secretName: crowdmind-tls
+  rules:
+    - host: ws.crowdmind.io
+      http:
+        paths:
+          - path: /game
+            pathType: Prefix
+            backend:
+              service:
+                name: game-engine
+                port:
+                  name: websocket
+          - path: /voting
+            pathType: Prefix
+            backend:
+              service:
+                name: voting-service
+                port:
+                  name: websocket
