@@ -2,16 +2,35 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+const jwtSecret = process.env.JWT_SECRET || 'dev-secret-change-in-production';
+const nodeEnv = process.env.NODE_ENV || 'development';
+
+// Fail fast in production with insecure JWT secrets
+if (nodeEnv === 'production') {
+  const insecureDefaults = [
+    'dev-secret-change-in-production',
+    'CHANGE_ME_IN_PRODUCTION',
+    'secret',
+    'changeme',
+  ];
+  if (insecureDefaults.includes(jwtSecret)) {
+    throw new Error('SECURITY: JWT_SECRET is using an insecure default in production');
+  }
+  if (jwtSecret.length < 32) {
+    throw new Error('SECURITY: JWT_SECRET must be at least 32 characters in production');
+  }
+}
+
 export const config = {
   port: parseInt(process.env.PORT || '8000', 10),
-  nodeEnv: process.env.NODE_ENV || 'development',
+  nodeEnv,
 
   cors: {
     origin: process.env.CORS_ORIGIN || '*',
   },
 
   jwt: {
-    secret: process.env.JWT_SECRET || 'dev-secret-change-in-production',
+    secret: jwtSecret,
   },
 
   redis: {

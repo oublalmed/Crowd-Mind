@@ -1,12 +1,27 @@
 import dotenv from 'dotenv';
+import { validateSecret, isProduction } from '@crowd-mind/shared';
 
 dotenv.config();
+
+const jwtSecret = process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION';
+
+// Fail fast: refuse to start in production with insecure defaults
+validateSecret('JWT_SECRET', jwtSecret, [
+  'CHANGE_ME_IN_PRODUCTION',
+  'dev-secret-change-in-production',
+  'secret',
+  'changeme',
+]);
+
+if (isProduction() && jwtSecret.length < 32) {
+  throw new Error('SECURITY: JWT_SECRET must be at least 32 characters in production');
+}
 
 export const config = {
   port: parseInt(process.env.AUTH_SERVICE_PORT || '3001', 10),
 
   jwt: {
-    secret: process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION',
+    secret: jwtSecret,
     accessTokenTtlSeconds: parseInt(process.env.JWT_ACCESS_TTL || '900', 10),
     refreshTokenTtlSeconds: parseInt(process.env.JWT_REFRESH_TTL || '2592000', 10),
   },
