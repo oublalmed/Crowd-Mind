@@ -15,7 +15,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { colors, spacing, typography, borderRadius, shadows } from '../../theme';
 import Card from '../../components/common/Card';
 import Button from '../../components/common/Button';
-import useAuthStore from '../../store/authStore';
+import { useAuthStore } from '../../store/authStore';
 import type { RootStackParamList } from '../../navigation/RootNavigator';
 
 interface StatItem {
