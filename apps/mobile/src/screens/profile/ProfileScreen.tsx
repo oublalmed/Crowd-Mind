@@ -9,11 +9,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { colors, spacing, typography, borderRadius, shadows } from '../../theme';
 import Card from '../../components/common/Card';
 import Button from '../../components/common/Button';
 import useAuthStore from '../../store/authStore';
+import type { RootStackParamList } from '../../navigation/RootNavigator';
 
 interface StatItem {
   label: string;
@@ -47,6 +50,7 @@ const ACHIEVEMENTS: Achievement[] = [
 ];
 
 const ProfileScreen: React.FC = () => {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const logout = useAuthStore((state) => state.logout);
 
   // Mock user data
@@ -210,7 +214,7 @@ const ProfileScreen: React.FC = () => {
       {/* Header with Settings */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Profile</Text>
-        <TouchableOpacity style={styles.settingsButton}>
+        <TouchableOpacity style={styles.settingsButton} onPress={() => navigation.navigate('Settings')}>
           <Ionicons name="settings-outline" size={24} color={colors.text} />
         </TouchableOpacity>
       </View>

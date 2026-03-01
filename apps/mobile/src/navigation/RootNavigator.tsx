@@ -5,13 +5,12 @@ import { useAuthStore } from '../store/authStore';
 import AuthStack from './AuthStack';
 import MainTabNavigator from './MainTabNavigator';
 import GameStack from './GameStack';
+import SettingsScreen from '../screens/settings/SettingsScreen';
 
 export type RootStackParamList = {
   Auth: undefined;
   Main: undefined;
   Game: { roomId: string; gameMode: string };
-  GameResults: { gameId: string };
-  PlayerProfile: { userId: string };
   Settings: undefined;
 };
 
@@ -38,6 +37,13 @@ const RootNavigator: React.FC = () => {
             options={{
               animation: 'slide_from_bottom',
               gestureEnabled: false,
+            }}
+          />
+          <Stack.Screen
+            name="Settings"
+            component={SettingsScreen}
+            options={{
+              animation: 'slide_from_right',
             }}
           />
         </>
