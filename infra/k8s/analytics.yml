@@ -1,0 +1,178 @@
+# =============================================================================
+# Kubernetes — Analytics Service (Deployment + Service + HPA)
+# =============================================================================
+# Handles event tracking, game/player statistics, and daily metric aggregation.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics
+  namespace: crowd-mind
+  labels:
+    app: analytics
+    app.kubernetes.io/name: analytics
+    app.kubernetes.io/part-of: crowd-mind
+    app.kubernetes.io/component: backend
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: analytics
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: analytics
+        app.kubernetes.io/name: analytics
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3007"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: crowd-mind-service
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: analytics
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: analytics
+          image: crowd-mind/analytics:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 3007
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          envFrom:
+            - configMapRef:
+                name: crowd-mind-config
+            - secretRef:
+                name: crowd-mind-secrets
+          env:
+            - name: SERVICE_NAME
+              value: "analytics"
+            - name: PORT
+              value: "3007"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+# =============================================================================
+# Service — analytics
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics
+  namespace: crowd-mind
+  labels:
+    app: analytics
+    app.kubernetes.io/name: analytics
+    app.kubernetes.io/part-of: crowd-mind
+spec:
+  type: ClusterIP
+  selector:
+    app: analytics
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+# =============================================================================
+# HorizontalPodAutoscaler — analytics
+# =============================================================================
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: analytics
+  namespace: crowd-mind
+  labels:
+    app: analytics
+    app.kubernetes.io/name: analytics
+    app.kubernetes.io/part-of: crowd-mind
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: analytics
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
