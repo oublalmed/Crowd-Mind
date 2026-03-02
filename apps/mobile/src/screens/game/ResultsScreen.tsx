@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -13,39 +13,65 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { colors, spacing, typography, borderRadius, shadows } from '../../theme';
 import type { GameStackParamList } from '../../navigation/GameStack';
+import { useGameStore } from '../../store/gameStore';
+import { useAuthStore } from '../../store/authStore';
 
 type Props = NativeStackScreenProps<GameStackParamList, 'Results'>;
 
-interface FinalPlayer {
+interface DisplayPlayer {
   userId: string;
   name: string;
   score: number;
-  gamesWon: number;
   accuracy: number;
 }
-
-const MOCK_RESULTS: FinalPlayer[] = [
-  { userId: '1', name: 'You', score: 1240, gamesWon: 3, accuracy: 78 },
-  { userId: '2', name: 'Player 2', score: 1100, gamesWon: 2, accuracy: 72 },
-  { userId: '3', name: 'Player 3', score: 860, gamesWon: 1, accuracy: 60 },
-  { userId: '4', name: 'Player 4', score: 720, gamesWon: 0, accuracy: 45 },
-];
 
 const PODIUM_COLORS = [colors.gold, colors.silver, colors.bronze];
 const PODIUM_HEIGHTS = [140, 110, 90];
 
 const ResultsScreen: React.FC<Props> = ({ navigation }) => {
+  const { finalResults, room, reset: resetGame } = useGameStore();
+  const { user } = useAuthStore();
+
+  const currentUserId = user?.id ?? '';
+
+  const results: DisplayPlayer[] = useMemo(() => {
+    const maxScore = finalResults.length > 0 ? finalResults[0].score : 1;
+    return finalResults.map((r) => {
+      const isCurrentUser = r.userId === currentUserId;
+      const player = room?.players[r.userId];
+      const name = isCurrentUser
+        ? 'You'
+        : player?.displayName || player?.username || 'Player';
+      const accuracy = maxScore > 0 ? Math.round((r.score / maxScore) * 100) : 0;
+      return {
+        userId: r.userId,
+        name,
+        score: r.score,
+        accuracy,
+      };
+    });
+  }, [finalResults, room, currentUserId]);
+
+  const topThree = results.slice(0, 3);
+  const isWinner = results.length > 0 && results[0].userId === currentUserId;
+
+  const myResult = results.find((p) => p.userId === currentUserId);
+  const myRank = myResult ? results.indexOf(myResult) + 1 : results.length;
+  const xpEarned = myResult ? Math.round(myResult.score / 10) : 0;
+
   const crownAnim = useRef(new Animated.Value(0)).current;
   const podiumAnims = useRef([
     new Animated.Value(0),
     new Animated.Value(0),
     new Animated.Value(0),
   ]).current;
-  const listAnims = useRef(MOCK_RESULTS.map(() => new Animated.Value(0))).current;
+  const listAnims = useRef(results.map(() => new Animated.Value(0))).current;
 
-  const topThree = MOCK_RESULTS.slice(0, 3);
-  const remaining = MOCK_RESULTS.slice(3);
-  const isWinner = MOCK_RESULTS[0]?.userId === '1';
+  useEffect(() => {
+    return () => {
+      resetGame();
+    };
+  }, []);
 
   useEffect(() => {
     // Crown bounce
@@ -92,10 +118,12 @@ const ResultsScreen: React.FC<Props> = ({ navigation }) => {
   }, []);
 
   const handlePlayAgain = () => {
+    resetGame();
     navigation.getParent()?.goBack();
   };
 
   const handleBackToHome = () => {
+    resetGame();
     navigation.getParent()?.goBack();
   };
 
@@ -191,10 +219,7 @@ const ResultsScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   const renderStats = () => {
-    const myResult = MOCK_RESULTS.find((p) => p.userId === '1');
     if (!myResult) return null;
-
-    const myRank = MOCK_RESULTS.indexOf(myResult) + 1;
 
     return (
       <View style={styles.statsContainer}>
@@ -220,7 +245,7 @@ const ResultsScreen: React.FC<Props> = ({ navigation }) => {
   const renderLeaderboard = () => (
     <View style={styles.leaderboardContainer}>
       <Text style={styles.leaderboardTitle}>Final Standings</Text>
-      {MOCK_RESULTS.map((player, index) => {
+      {results.map((player, index) => {
         const animValue = listAnims[index];
 
         return (
@@ -228,7 +253,7 @@ const ResultsScreen: React.FC<Props> = ({ navigation }) => {
             key={player.userId}
             style={[
               styles.leaderboardRow,
-              player.userId === '1' && styles.leaderboardRowHighlight,
+              player.userId === currentUserId && styles.leaderboardRowHighlight,
               {
                 opacity: animValue,
                 transform: [

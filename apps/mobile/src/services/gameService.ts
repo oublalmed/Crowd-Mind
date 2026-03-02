@@ -1,41 +1,54 @@
 import api from './api';
+import type { RoomState } from '../store/gameStore';
 
-export interface Room {
-  id: string;
-  gameMode: string;
-  hostId: string;
-  playerCount: number;
-  maxPlayers: number;
-  status: 'waiting' | 'in_progress' | 'finished';
-  createdAt: string;
-}
-
-export interface CreateRoomResponse {
-  room: Room;
-}
-
-export interface JoinRoomResponse {
-  room: Room;
+interface ApiResponse<T> {
+  success: boolean;
+  data: T;
 }
 
 const gameService = {
-  getAvailableRooms: async (): Promise<Room[]> => {
-    const response = await api.get<Room[]>('/games/rooms');
-    return response.data;
+  getAvailableRooms: async (): Promise<RoomState[]> => {
+    const response = await api.get<ApiResponse<RoomState[]>>('/api/v1/games/rooms');
+    return response.data.data;
   },
 
-  createRoom: async (gameMode: string): Promise<CreateRoomResponse> => {
-    const response = await api.post<CreateRoomResponse>('/games/rooms', {
+  createRoom: async (
+    hostId: string,
+    gameMode: string,
+    settings?: {
+      maxPlayers?: number;
+      rounds?: number;
+      votingPhaseDurationSec?: number;
+      isPrivate?: boolean;
+    },
+  ): Promise<RoomState> => {
+    const response = await api.post<ApiResponse<RoomState>>('/api/v1/games/rooms', {
+      hostId,
       gameMode,
+      settings: {
+        maxPlayers: settings?.maxPlayers ?? 8,
+        rounds: settings?.rounds ?? 5,
+        votingPhaseDurationSec: settings?.votingPhaseDurationSec ?? 30,
+        resultsPhaseDurationSec: 10,
+        isPrivate: settings?.isPrivate ?? false,
+      },
     });
-    return response.data;
+    return response.data.data;
   },
 
-  joinRoom: async (roomId: string): Promise<JoinRoomResponse> => {
-    const response = await api.post<JoinRoomResponse>(
-      `/games/rooms/${roomId}/join`,
+  joinRoom: async (roomId: string, userId: string): Promise<RoomState> => {
+    const response = await api.post<ApiResponse<RoomState>>(
+      `/api/v1/games/rooms/${roomId}/join`,
+      { userId },
     );
-    return response.data;
+    return response.data.data;
+  },
+
+  getRoomState: async (roomId: string): Promise<RoomState> => {
+    const response = await api.get<ApiResponse<RoomState>>(
+      `/api/v1/games/rooms/${roomId}`,
+    );
+    return response.data.data;
   },
 };
 

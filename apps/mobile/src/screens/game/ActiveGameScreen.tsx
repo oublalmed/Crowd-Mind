@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -13,10 +13,11 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { colors, spacing, typography, borderRadius, shadows } from '../../theme';
 import type { GameStackParamList } from '../../navigation/GameStack';
+import { useGameStore } from '../../store/gameStore';
+import { useGameRoom } from '../../hooks/useSocket';
+import { useAuthStore } from '../../store/authStore';
 
 type Props = NativeStackScreenProps<GameStackParamList, 'ActiveGame'>;
-
-type GamePhase = 'voting' | 'results' | 'transition';
 
 interface Choice {
   id: string;
@@ -25,52 +26,68 @@ interface Choice {
   color: string;
 }
 
-interface PlayerScore {
-  userId: string;
-  name: string;
-  score: number;
-  delta: number;
-}
-
-const MOCK_CHOICES: Choice[] = [
+const CHOICES: Choice[] = [
   { id: 'a', label: 'Option A', icon: 'diamond', color: colors.primary },
   { id: 'b', label: 'Option B', icon: 'flash', color: colors.secondary },
   { id: 'c', label: 'Option C', icon: 'star', color: colors.accent },
   { id: 'd', label: 'Option D', icon: 'heart', color: colors.gold },
 ];
 
-const MOCK_SCORES: PlayerScore[] = [
-  { userId: '1', name: 'You', score: 240, delta: 80 },
-  { userId: '2', name: 'Player 2', score: 200, delta: 60 },
-  { userId: '3', name: 'Player 3', score: 160, delta: 40 },
-  { userId: '4', name: 'Player 4', score: 120, delta: 20 },
-];
-
-const VOTING_DURATION = 30;
 const RESULTS_DURATION = 8;
-const TOTAL_ROUNDS = 5;
 
 const ActiveGameScreen: React.FC<Props> = ({ route, navigation }) => {
-  const { roomId, gameMode } = route.params;
+  const { roomId } = route.params;
 
-  const [phase, setPhase] = useState<GamePhase>('voting');
-  const [currentRound, setCurrentRound] = useState(1);
-  const [timeLeft, setTimeLeft] = useState(VOTING_DURATION);
+  const userId = useAuthStore((state) => state.user?.id) || '';
+  const { submitVote } = useGameRoom(roomId);
+
+  const phase = useGameStore((state) => state.phase);
+  const currentRound = useGameStore((state) => state.currentRound);
+  const totalRounds = useGameStore((state) => state.totalRounds);
+  const votingDuration = useGameStore((state) => state.votingDuration);
+  const votesReceived = useGameStore((state) => state.votesReceived);
+  const myVote = useGameStore((state) => state.myVote);
+  const voteConfirmed = useGameStore((state) => state.voteConfirmed);
+  const room = useGameStore((state) => state.room);
+
+  const totalPlayers = room ? Object.keys(room.players).length : 0;
+
+  const [timeLeft, setTimeLeft] = useState(votingDuration);
   const [selectedChoice, setSelectedChoice] = useState<string | null>(null);
-  const [hasVoted, setHasVoted] = useState(false);
-  const [roundScores, setRoundScores] = useState<PlayerScore[]>([]);
-  const [voteCount, setVoteCount] = useState(0);
-  const [totalPlayers] = useState(4);
 
   const timerAnim = useRef(new Animated.Value(1)).current;
-  const choiceAnims = useRef(MOCK_CHOICES.map(() => new Animated.Value(0))).current;
-  const scoreAnims = useRef(MOCK_SCORES.map(() => new Animated.Value(0))).current;
+  const choiceAnims = useRef(CHOICES.map(() => new Animated.Value(0))).current;
+  const scoreAnims = useRef(
+    Array.from({ length: 20 }, () => new Animated.Value(0))
+  ).current;
 
-  // Timer countdown
+  // Derive sorted player scores from room state
+  const playerScores = useMemo(() => {
+    if (!room) return [];
+    return Object.values(room.players)
+      .map((player) => ({
+        odId: player.userId,
+        name:
+          player.userId === userId
+            ? 'You'
+            : player.displayName || player.username || player.userId,
+        score: player.score,
+      }))
+      .sort((a, b) => b.score - a.score);
+  }, [room, userId]);
+
+  // Navigate to Results when game is finished
   useEffect(() => {
-    if (phase !== 'voting' && phase !== 'results') return;
+    if (phase === 'finished') {
+      navigation.replace('Results', { gameId: roomId, roomId });
+    }
+  }, [phase, roomId, navigation]);
 
-    const duration = phase === 'voting' ? VOTING_DURATION : RESULTS_DURATION;
+  // Timer countdown for voting phase
+  useEffect(() => {
+    if (phase !== 'voting') return;
+
+    const duration = votingDuration;
     setTimeLeft(duration);
     timerAnim.setValue(1);
 
@@ -84,11 +101,6 @@ const ActiveGameScreen: React.FC<Props> = ({ route, navigation }) => {
       setTimeLeft((prev) => {
         if (prev <= 1) {
           clearInterval(interval);
-          if (phase === 'voting') {
-            handleVotingEnd();
-          } else {
-            handleResultsEnd();
-          }
           return 0;
         }
         return prev - 1;
@@ -96,6 +108,40 @@ const ActiveGameScreen: React.FC<Props> = ({ route, navigation }) => {
     }, 1000);
 
     return () => clearInterval(interval);
+  }, [phase, currentRound, votingDuration]);
+
+  // Timer countdown for results phase
+  useEffect(() => {
+    if (phase !== 'results') return;
+
+    const duration = RESULTS_DURATION;
+    setTimeLeft(duration);
+    timerAnim.setValue(1);
+
+    Animated.timing(timerAnim, {
+      toValue: 0,
+      duration: duration * 1000,
+      useNativeDriver: false,
+    }).start();
+
+    const interval = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [phase, currentRound]);
+
+  // Reset local selection when a new round starts (store resets myVote)
+  useEffect(() => {
+    if (phase === 'voting') {
+      setSelectedChoice(null);
+    }
   }, [phase, currentRound]);
 
   // Stagger choice animations on voting phase
@@ -120,9 +166,10 @@ const ActiveGameScreen: React.FC<Props> = ({ route, navigation }) => {
   useEffect(() => {
     if (phase === 'results') {
       scoreAnims.forEach((anim) => anim.setValue(0));
+      const animsToRun = scoreAnims.slice(0, playerScores.length);
       Animated.stagger(
         120,
-        scoreAnims.map((anim) =>
+        animsToRun.map((anim) =>
           Animated.spring(anim, {
             toValue: 1,
             tension: 50,
@@ -132,39 +179,19 @@ const ActiveGameScreen: React.FC<Props> = ({ route, navigation }) => {
         )
       ).start();
     }
-  }, [phase]);
-
-  const handleVotingEnd = useCallback(() => {
-    setPhase('results');
-    setRoundScores(MOCK_SCORES);
-  }, []);
-
-  const handleResultsEnd = useCallback(() => {
-    if (currentRound >= TOTAL_ROUNDS) {
-      navigation.replace('Results', { gameId: roomId, roomId });
-      return;
-    }
-
-    setPhase('transition');
-    setTimeout(() => {
-      setCurrentRound((r) => r + 1);
-      setSelectedChoice(null);
-      setHasVoted(false);
-      setVoteCount(0);
-      setPhase('voting');
-    }, 1500);
-  }, [currentRound, roomId, navigation]);
+  }, [phase, playerScores.length]);
 
   const handleSelectChoice = (choiceId: string) => {
-    if (hasVoted) return;
+    if (myVote) return;
     setSelectedChoice(choiceId);
   };
 
   const handleSubmitVote = () => {
-    if (!selectedChoice || hasVoted) return;
-    setHasVoted(true);
-    setVoteCount((c) => c + 1);
+    if (!selectedChoice || myVote) return;
+    submitVote(selectedChoice);
   };
+
+  const hasVoted = myVote !== null;
 
   const timerColor =
     timeLeft <= 5 ? colors.error : timeLeft <= 10 ? colors.warning : colors.primary;
@@ -179,7 +206,7 @@ const ActiveGameScreen: React.FC<Props> = ({ route, navigation }) => {
       <View style={styles.roundInfo}>
         <Text style={styles.roundLabel}>ROUND</Text>
         <Text style={styles.roundNumber}>
-          {currentRound}/{TOTAL_ROUNDS}
+          {currentRound}/{totalRounds}
         </Text>
       </View>
       <View style={styles.timerContainer}>
@@ -195,7 +222,7 @@ const ActiveGameScreen: React.FC<Props> = ({ route, navigation }) => {
       <View style={styles.voteCountContainer}>
         <Ionicons name="people" size={16} color={colors.textSecondary} />
         <Text style={styles.voteCountText}>
-          {voteCount}/{totalPlayers}
+          {votesReceived}/{totalPlayers}
         </Text>
       </View>
     </View>
@@ -230,7 +257,7 @@ const ActiveGameScreen: React.FC<Props> = ({ route, navigation }) => {
 
   const renderVotingPhase = () => (
     <View style={styles.choicesContainer}>
-      {MOCK_CHOICES.map((choice, index) => {
+      {CHOICES.map((choice, index) => {
         const isSelected = selectedChoice === choice.id;
         const animValue = choiceAnims[index];
 
@@ -303,67 +330,78 @@ const ActiveGameScreen: React.FC<Props> = ({ route, navigation }) => {
 
       {hasVoted && (
         <View style={styles.votedIndicator}>
-          <Ionicons name="checkmark-circle" size={28} color={colors.success} />
-          <Text style={styles.votedText}>Vote submitted! Waiting for others...</Text>
+          <Ionicons
+            name="checkmark-circle"
+            size={28}
+            color={voteConfirmed ? colors.success : colors.warning}
+          />
+          <Text style={styles.votedText}>
+            {voteConfirmed
+              ? 'Vote confirmed! Waiting for others...'
+              : 'Vote submitted! Waiting for confirmation...'}
+          </Text>
         </View>
       )}
     </View>
   );
 
-  const renderResultsPhase = () => (
-    <View style={styles.resultsContainer}>
-      {roundScores.map((player, index) => {
-        const animValue = scoreAnims[index];
+  const renderResultsPhase = () => {
+    const maxScore = playerScores.length > 0 ? Math.max(playerScores[0].score, 1) : 1;
 
-        return (
-          <Animated.View
-            key={player.userId}
-            style={[
-              styles.scoreRow,
-              {
-                opacity: animValue,
-                transform: [
-                  {
-                    translateX: animValue.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [-50, 0],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
-            <View style={styles.scoreRank}>
-              <Text style={styles.scoreRankText}>#{index + 1}</Text>
-            </View>
-            <View style={styles.scoreInfo}>
-              <Text style={styles.scoreName}>{player.name}</Text>
-              <View style={styles.scoreBarOuter}>
-                <View
-                  style={[
-                    styles.scoreBarInner,
+    return (
+      <View style={styles.resultsContainer}>
+        {playerScores.map((player, index) => {
+          const animValue = scoreAnims[index] || new Animated.Value(1);
+
+          return (
+            <Animated.View
+              key={player.odId}
+              style={[
+                styles.scoreRow,
+                {
+                  opacity: animValue,
+                  transform: [
                     {
-                      width: `${(player.score / 300) * 100}%`,
-                      backgroundColor:
-                        index === 0
-                          ? colors.gold
-                          : index === 1
-                            ? colors.silver
-                            : colors.primary,
+                      translateX: animValue.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [-50, 0],
+                      }),
                     },
-                  ]}
-                />
+                  ],
+                },
+              ]}
+            >
+              <View style={styles.scoreRank}>
+                <Text style={styles.scoreRankText}>#{index + 1}</Text>
               </View>
-            </View>
-            <View style={styles.scoreValues}>
-              <Text style={styles.scoreTotal}>{player.score}</Text>
-              <Text style={styles.scoreDelta}>+{player.delta}</Text>
-            </View>
-          </Animated.View>
-        );
-      })}
-    </View>
-  );
+              <View style={styles.scoreInfo}>
+                <Text style={styles.scoreName}>{player.name}</Text>
+                <View style={styles.scoreBarOuter}>
+                  <View
+                    style={[
+                      styles.scoreBarInner,
+                      {
+                        width: `${(player.score / maxScore) * 100}%`,
+                        backgroundColor:
+                          index === 0
+                            ? colors.gold
+                            : index === 1
+                              ? colors.silver
+                              : colors.primary,
+                      },
+                    ]}
+                  />
+                </View>
+              </View>
+              <View style={styles.scoreValues}>
+                <Text style={styles.scoreTotal}>{player.score}</Text>
+              </View>
+            </Animated.View>
+          );
+        })}
+      </View>
+    );
+  };
 
   const renderTransition = () => (
     <View style={styles.transitionContainer}>

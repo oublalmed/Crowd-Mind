@@ -1,15 +1,18 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
   TouchableOpacity,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
 import { colors, spacing, typography, borderRadius, shadows } from '../../theme';
+import notificationService, { Notification as ApiNotification } from '../../services/notificationService';
 
 type NotificationType = 'game_invite' | 'friend_request' | 'achievement' | 'system';
 
@@ -30,76 +33,90 @@ const NOTIFICATION_ICONS: Record<NotificationType, { name: keyof typeof Ionicons
   system: { name: 'information-circle', color: colors.info },
 };
 
-const MOCK_NOTIFICATIONS: Notification[] = [
-  {
-    id: '1',
-    type: 'game_invite',
-    title: 'Game Invitation',
-    message: 'NeonPlayer42 invited you to join "Friday Night Showdown"',
-    timeAgo: '5 min ago',
-    isRead: false,
-    group: 'today',
-  },
-  {
-    id: '2',
-    type: 'achievement',
-    title: 'Achievement Unlocked!',
-    message: 'You earned "Speed Demon" - Win 5 Speed Vote games in a row',
-    timeAgo: '2 hours ago',
-    isRead: false,
-    group: 'today',
-  },
-  {
-    id: '3',
-    type: 'friend_request',
-    title: 'Friend Request',
-    message: 'CrowdKing wants to be your friend',
-    timeAgo: '4 hours ago',
-    isRead: false,
-    group: 'today',
-  },
-  {
-    id: '4',
-    type: 'system',
-    title: 'Season 3 is Live!',
-    message: 'New season has started with exclusive rewards. Jump in and climb the ranks!',
-    timeAgo: '1 day ago',
-    isRead: true,
-    group: 'earlier',
-  },
-  {
-    id: '5',
-    type: 'game_invite',
-    title: 'Game Reminder',
-    message: 'Your scheduled game "Logic Masters" starts in 30 minutes',
-    timeAgo: '2 days ago',
-    isRead: true,
-    group: 'earlier',
-  },
-  {
-    id: '6',
-    type: 'achievement',
-    title: 'New Milestone',
-    message: 'You reached Level 24! New items unlocked in the Shop',
-    timeAgo: '3 days ago',
-    isRead: true,
-    group: 'earlier',
-  },
-];
+const isToday = (dateStr: string): boolean => {
+  const date = new Date(dateStr);
+  const now = new Date();
+  return (
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+  );
+};
+
+const formatTimeAgo = (dateStr: string): string => {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMinutes = Math.floor(diffMs / (1000 * 60));
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (diffMinutes < 1) return 'Just now';
+  if (diffMinutes < 60) return `${diffMinutes} min ago`;
+  if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+  if (diffDays === 1) return '1 day ago';
+  return `${diffDays} days ago`;
+};
+
+const mapApiNotification = (apiNotification: ApiNotification): Notification => ({
+  id: apiNotification.id,
+  type: (apiNotification.type as NotificationType) || 'system',
+  title: apiNotification.title,
+  message: apiNotification.body,
+  timeAgo: formatTimeAgo(apiNotification.createdAt),
+  isRead: apiNotification.readAt !== null,
+  group: isToday(apiNotification.createdAt) ? 'today' : 'earlier',
+});
 
 const NotificationsScreen: React.FC = () => {
-  const [notifications, setNotifications] = useState<Notification[]>(MOCK_NOTIFICATIONS);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const response = await notificationService.getNotifications(1, 50);
+      setNotifications(response.notifications.map(mapApiNotification));
+    } catch {
+      // Keep existing notifications on error
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchNotifications();
+  }, [fetchNotifications]);
+
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchNotifications();
+  }, [fetchNotifications]);
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
   const hasNotifications = notifications.length > 0;
 
-  const handleMarkAllRead = useCallback(() => {
-    setNotifications((prev) =>
-      prev.map((n) => ({ ...n, isRead: true }))
-    );
+  const handleMarkAllRead = useCallback(async () => {
+    try {
+      await notificationService.markAllAsRead();
+      setNotifications((prev) =>
+        prev.map((n) => ({ ...n, isRead: true }))
+      );
+    } catch {
+      // Optimistically update UI anyway
+      setNotifications((prev) =>
+        prev.map((n) => ({ ...n, isRead: true }))
+      );
+    }
   }, []);
 
-  const handleToggleRead = useCallback((id: string) => {
+  const handleToggleRead = useCallback(async (id: string) => {
+    try {
+      await notificationService.markAsRead(id);
+    } catch {
+      // continue regardless
+    }
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, isRead: true } : n))
     );
@@ -168,6 +185,14 @@ const NotificationsScreen: React.FC = () => {
   );
 
   const renderContent = () => {
+    if (loading) {
+      return (
+        <View style={styles.emptyState}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      );
+    }
+
     if (!hasNotifications) return renderEmptyState();
 
     const sections: React.ReactNode[] = [];
@@ -209,6 +234,9 @@ const NotificationsScreen: React.FC = () => {
         keyExtractor={(_, index) => `section-${index}`}
         contentContainerStyle={styles.listContainer}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.primary} />
+        }
       />
     );
   };

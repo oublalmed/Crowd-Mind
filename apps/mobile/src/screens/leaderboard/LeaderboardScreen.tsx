@@ -1,15 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
   TouchableOpacity,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
 import { colors, spacing, typography, borderRadius, shadows } from '../../theme';
+import leaderboardService from '../../services/leaderboardService';
+import { useAuthStore } from '../../store/authStore';
 
 type TimePeriod = 'daily' | 'weekly' | 'season' | 'allTime';
 
@@ -30,29 +33,17 @@ const TIME_PERIODS: { key: TimePeriod; label: string }[] = [
   { key: 'allTime', label: 'All Time' },
 ];
 
-const MOCK_LEADERBOARD: LeaderboardEntry[] = [
-  { id: '1', rank: 1, username: 'MindMaster', displayName: 'Mind Master', score: 12450, avatarColor: '#6C5CE7' },
-  { id: '2', rank: 2, username: 'CrowdKing', displayName: 'Crowd King', score: 11280, avatarColor: '#00CEC9' },
-  { id: '3', rank: 3, username: 'VoteQueen', displayName: 'Vote Queen', score: 10890, avatarColor: '#FD79A8' },
-  { id: '4', rank: 4, username: 'NeonStrike', displayName: 'Neon Strike', score: 9750, avatarColor: '#FDCB6E' },
-  { id: '5', rank: 5, username: 'PixelHunter', displayName: 'Pixel Hunter', score: 9340, avatarColor: '#74B9FF' },
-  { id: '6', rank: 6, username: 'BrainWave', displayName: 'Brain Wave', score: 8920, avatarColor: '#A29BFE' },
-  { id: '7', rank: 7, username: 'ThinkFast', displayName: 'Think Fast', score: 8510, avatarColor: '#81ECEC' },
-  { id: '8', rank: 8, username: 'VoteMaster', displayName: 'Vote Master', score: 8100, avatarColor: '#FF7675' },
-  { id: '9', rank: 9, username: 'CrowdSurfer', displayName: 'Crowd Surfer', score: 7680, avatarColor: '#00B894' },
-  { id: '10', rank: 10, username: 'MajorityRule', displayName: 'Majority Rule', score: 7250, avatarColor: '#E17055' },
-  { id: '11', rank: 11, username: 'HiveMind', displayName: 'Hive Mind', score: 6890, avatarColor: '#6C5CE7' },
-  { id: '12', rank: 12, username: 'PollStar', displayName: 'Poll Star', score: 6430, avatarColor: '#00CEC9' },
+const AVATAR_COLORS = [
+  '#6C5CE7', '#00CEC9', '#FD79A8', '#FDCB6E', '#74B9FF',
+  '#A29BFE', '#81ECEC', '#FF7675', '#00B894', '#E17055',
 ];
 
-const CURRENT_USER: LeaderboardEntry = {
-  id: 'current',
-  rank: 47,
-  username: 'Player',
-  displayName: 'Player',
-  score: 3280,
-  avatarColor: colors.primary,
-  isCurrentUser: true,
+const getAvatarColor = (userId: string): string => {
+  let hash = 0;
+  for (let i = 0; i < userId.length; i++) {
+    hash = userId.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 };
 
 const getRankColor = (rank: number): string => {
@@ -75,9 +66,74 @@ const formatScore = (score: number): string => {
 
 const LeaderboardScreen: React.FC = () => {
   const [selectedPeriod, setSelectedPeriod] = useState<TimePeriod>('weekly');
+  const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
+  const [currentUser, setCurrentUser] = useState<LeaderboardEntry | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const user = useAuthStore((state) => state.user);
 
-  const topThree = MOCK_LEADERBOARD.slice(0, 3);
-  const restOfList = MOCK_LEADERBOARD.slice(3);
+  const fetchLeaderboard = useCallback(async (period: TimePeriod) => {
+    setLoading(true);
+    try {
+      let response;
+      switch (period) {
+        case 'weekly':
+          response = await leaderboardService.getWeekly(1, 50);
+          break;
+        case 'daily':
+        case 'season':
+        case 'allTime':
+        default:
+          response = await leaderboardService.getGlobal(1, 50);
+          break;
+      }
+
+      const mapped: LeaderboardEntry[] = response.entries.map((entry) => ({
+        id: entry.userId,
+        rank: entry.rank,
+        username: entry.username,
+        displayName: entry.displayName,
+        score: entry.score,
+        avatarColor: getAvatarColor(entry.userId),
+        isCurrentUser: user ? entry.userId === user.id : false,
+      }));
+
+      setEntries(mapped);
+
+      // Fetch current user rank
+      if (user) {
+        try {
+          const playerRank = await leaderboardService.getPlayerRank(user.id);
+          if (playerRank) {
+            setCurrentUser({
+              id: playerRank.userId,
+              rank: playerRank.rank,
+              username: user.username,
+              displayName: user.displayName,
+              score: playerRank.score,
+              avatarColor: colors.primary,
+              isCurrentUser: true,
+            });
+          } else {
+            setCurrentUser(null);
+          }
+        } catch {
+          setCurrentUser(null);
+        }
+      }
+    } catch {
+      setEntries([]);
+      setCurrentUser(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    fetchLeaderboard(selectedPeriod);
+  }, [selectedPeriod, fetchLeaderboard]);
+
+  const topThree = entries.slice(0, 3);
+  const restOfList = entries.slice(3);
 
   const renderTabSelector = () => (
     <View style={styles.tabContainer}>
@@ -173,12 +229,15 @@ const LeaderboardScreen: React.FC = () => {
     </View>
   );
 
-  const renderCurrentUserSticky = () => (
-    <View style={styles.stickyContainer}>
-      <View style={styles.stickyDivider} />
-      {renderListItem({ item: CURRENT_USER })}
-    </View>
-  );
+  const renderCurrentUserSticky = () => {
+    if (!currentUser) return null;
+    return (
+      <View style={styles.stickyContainer}>
+        <View style={styles.stickyDivider} />
+        {renderListItem({ item: currentUser })}
+      </View>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -193,20 +252,33 @@ const LeaderboardScreen: React.FC = () => {
       {/* Tab Selector */}
       {renderTabSelector()}
 
-      {/* Top 3 */}
-      {renderTopThree()}
+      {loading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      ) : entries.length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <Ionicons name="trophy-outline" size={48} color={colors.textMuted} />
+          <Text style={styles.emptyText}>No leaderboard data available</Text>
+        </View>
+      ) : (
+        <>
+          {/* Top 3 */}
+          {topThree.length >= 3 && renderTopThree()}
 
-      {/* Rest of List */}
-      <FlatList
-        data={restOfList}
-        renderItem={renderListItem}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContainer}
-        showsVerticalScrollIndicator={false}
-      />
+          {/* Rest of List */}
+          <FlatList
+            data={restOfList}
+            renderItem={renderListItem}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.listContainer}
+            showsVerticalScrollIndicator={false}
+          />
 
-      {/* Sticky Current User */}
-      {renderCurrentUserSticky()}
+          {/* Sticky Current User */}
+          {renderCurrentUserSticky()}
+        </>
+      )}
     </SafeAreaView>
   );
 };
@@ -396,6 +468,23 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: colors.border,
     marginBottom: spacing.sm,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  emptyText: {
+    fontSize: typography.size.md,
+    color: colors.textMuted,
+    marginTop: spacing.md,
+    textAlign: 'center',
   },
 });
 

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,13 +6,18 @@ import {
   ScrollView,
   TouchableOpacity,
   Dimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
 
 import { colors, spacing, typography, borderRadius, shadows } from '../../theme';
 import Card from '../../components/common/Card';
 import Button from '../../components/common/Button';
+import { useAuthStore } from '../../store/authStore';
+import gameService from '../../services/gameService';
+import type { RoomState } from '../../store/gameStore';
 
 const { width } = Dimensions.get('window');
 const MODE_CARD_WIDTH = (width - spacing.lg * 2 - spacing.md * 2) / 3;
@@ -26,15 +31,17 @@ interface GameMode {
   color: string;
 }
 
-interface ActiveGame {
-  id: string;
-  title: string;
-  host: string;
-  players: number;
-  maxPlayers: number;
-  mode: string;
-  startingIn: string;
-}
+const GAME_MODE_ID_MAP: Record<string, string> = {
+  'crowd-mind': 'crowd_mind',
+  'speed-vote': 'speed_vote',
+  'debate': 'debate',
+};
+
+const BACKEND_MODE_DISPLAY: Record<string, string> = {
+  'crowd_mind': 'Crowd Mind',
+  'speed_vote': 'Speed Vote',
+  'debate': 'Debate',
+};
 
 const GAME_MODES: GameMode[] = [
   {
@@ -63,38 +70,81 @@ const GAME_MODES: GameMode[] = [
   },
 ];
 
-const ACTIVE_GAMES: ActiveGame[] = [
-  {
-    id: '1',
-    title: 'Friday Night Showdown',
-    host: 'NeonPlayer42',
-    players: 7,
-    maxPlayers: 12,
-    mode: 'Crowd Mind',
-    startingIn: '2 min',
-  },
-  {
-    id: '2',
-    title: 'Quick Thinkers Only',
-    host: 'SpeedDemon',
-    players: 4,
-    maxPlayers: 8,
-    mode: 'Speed Vote',
-    startingIn: 'Now',
-  },
-  {
-    id: '3',
-    title: 'The Great Debate',
-    host: 'LogicMaster',
-    players: 3,
-    maxPlayers: 6,
-    mode: 'Debate',
-    startingIn: '5 min',
-  },
-];
-
 const HomeScreen: React.FC = () => {
-  const displayName = 'Player';
+  const navigation = useNavigation<any>();
+  const user = useAuthStore((state) => state.user);
+  const displayName = user?.displayName ?? 'Player';
+
+  const [activeGames, setActiveGames] = useState<RoomState[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const fetchAvailableRooms = useCallback(async () => {
+    try {
+      setError(null);
+      setLoading(true);
+      const rooms = await gameService.getAvailableRooms();
+      setActiveGames(rooms);
+    } catch (err) {
+      setError('Failed to load active games. Pull down to retry.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAvailableRooms();
+  }, [fetchAvailableRooms]);
+
+  const handleQuickPlay = async () => {
+    if (!user || actionLoading) return;
+    try {
+      setActionLoading(true);
+      const room = await gameService.createRoom(user.id, 'crowd_mind');
+      navigation.navigate('Game', {
+        screen: 'Lobby',
+        params: { roomId: room.id, gameMode: room.gameMode },
+      });
+    } catch (err) {
+      setError('Failed to create room. Please try again.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleGameModePress = async (mode: GameMode) => {
+    if (!user || actionLoading) return;
+    const backendMode = GAME_MODE_ID_MAP[mode.id] ?? mode.id;
+    try {
+      setActionLoading(true);
+      const room = await gameService.createRoom(user.id, backendMode);
+      navigation.navigate('Game', {
+        screen: 'Lobby',
+        params: { roomId: room.id, gameMode: room.gameMode },
+      });
+    } catch (err) {
+      setError('Failed to create room. Please try again.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleActiveGamePress = async (room: RoomState) => {
+    if (!user || actionLoading) return;
+    try {
+      setActionLoading(true);
+      await gameService.joinRoom(room.id, user.id);
+      navigation.navigate('Game', {
+        screen: 'Lobby',
+        params: { roomId: room.id, gameMode: room.gameMode },
+      });
+    } catch (err) {
+      setError('Failed to join room. Please try again.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   const renderDailyChallenge = () => (
     <Card
@@ -130,6 +180,7 @@ const HomeScreen: React.FC = () => {
       key={mode.id}
       style={styles.modeCard}
       activeOpacity={0.7}
+      onPress={() => handleGameModePress(mode)}
     >
       <View style={[styles.modeIconCircle, { backgroundColor: mode.color + '20' }]}>
         <Ionicons name={mode.icon} size={24} color={mode.color} />
@@ -143,39 +194,48 @@ const HomeScreen: React.FC = () => {
     </TouchableOpacity>
   );
 
-  const renderActiveGame = (game: ActiveGame) => (
-    <Card key={game.id} style={styles.activeGameCard} onPress={() => {}}>
-      <View style={styles.activeGameRow}>
-        <View style={styles.activeGameInfo}>
-          <Text style={styles.activeGameTitle} numberOfLines={1}>{game.title}</Text>
-          <Text style={styles.activeGameHost}>Hosted by {game.host}</Text>
-          <View style={styles.activeGameMeta}>
-            <View style={styles.activeGameTag}>
-              <Text style={styles.activeGameTagText}>{game.mode}</Text>
+  const renderActiveGame = (room: RoomState) => {
+    const playerCount = Object.keys(room.players).length;
+    const maxPlayers = room.settings.maxPlayers;
+    const modeDisplay = BACKEND_MODE_DISPLAY[room.gameMode] ?? room.gameMode;
+    const hostPlayer = room.players[room.hostId];
+    const hostName = hostPlayer?.displayName ?? hostPlayer?.username ?? 'Unknown';
+    const isLive = room.status === 'active';
+
+    return (
+      <Card key={room.id} style={styles.activeGameCard} onPress={() => handleActiveGamePress(room)}>
+        <View style={styles.activeGameRow}>
+          <View style={styles.activeGameInfo}>
+            <Text style={styles.activeGameTitle} numberOfLines={1}>{modeDisplay} Room</Text>
+            <Text style={styles.activeGameHost}>Hosted by {hostName}</Text>
+            <View style={styles.activeGameMeta}>
+              <View style={styles.activeGameTag}>
+                <Text style={styles.activeGameTagText}>{modeDisplay}</Text>
+              </View>
+              <Text style={styles.activeGamePlayers}>
+                <Ionicons name="people-outline" size={12} color={colors.textSecondary} />
+                {'  '}{playerCount}/{maxPlayers}
+              </Text>
             </View>
-            <Text style={styles.activeGamePlayers}>
-              <Ionicons name="people-outline" size={12} color={colors.textSecondary} />
-              {'  '}{game.players}/{game.maxPlayers}
-            </Text>
           </View>
-        </View>
-        <View style={styles.activeGameAction}>
-          <View style={[
-            styles.startingBadge,
-            game.startingIn === 'Now' && styles.startingNowBadge,
-          ]}>
-            <Text style={[
-              styles.startingText,
-              game.startingIn === 'Now' && styles.startingNowText,
+          <View style={styles.activeGameAction}>
+            <View style={[
+              styles.startingBadge,
+              isLive && styles.startingNowBadge,
             ]}>
-              {game.startingIn === 'Now' ? 'LIVE' : game.startingIn}
-            </Text>
+              <Text style={[
+                styles.startingText,
+                isLive && styles.startingNowText,
+              ]}>
+                {isLive ? 'LIVE' : 'Waiting'}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
           </View>
-          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
         </View>
-      </View>
-    </Card>
-  );
+      </Card>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -201,9 +261,10 @@ const HomeScreen: React.FC = () => {
         {/* Quick Play Button */}
         <View style={styles.quickPlayContainer}>
           <Button
-            title="Quick Play"
-            onPress={() => {}}
+            title={actionLoading ? "Creating..." : "Quick Play"}
+            onPress={handleQuickPlay}
             variant="primary"
+            disabled={actionLoading}
             style={styles.quickPlayButton}
           />
           <View style={styles.quickPlayIcon}>
@@ -226,9 +287,20 @@ const HomeScreen: React.FC = () => {
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Active Games</Text>
           <View style={styles.liveDot} />
-          <Text style={styles.liveText}>{ACTIVE_GAMES.length} Live</Text>
+          <Text style={styles.liveText}>{activeGames.length} Live</Text>
         </View>
-        {ACTIVE_GAMES.map(renderActiveGame)}
+        {error && (
+          <TouchableOpacity onPress={fetchAvailableRooms}>
+            <Text style={styles.errorText}>{error}</Text>
+          </TouchableOpacity>
+        )}
+        {loading ? (
+          <ActivityIndicator size="large" color={colors.primary} style={styles.loadingIndicator} />
+        ) : activeGames.length === 0 && !error ? (
+          <Text style={styles.emptyText}>No active games right now. Start one!</Text>
+        ) : (
+          activeGames.map(renderActiveGame)
+        )}
 
         <View style={styles.bottomSpacer} />
       </ScrollView>
@@ -493,6 +565,22 @@ const styles = StyleSheet.create({
   startingNowText: {
     color: colors.success,
     fontWeight: typography.weight.bold,
+  },
+  errorText: {
+    fontSize: typography.size.sm,
+    color: colors.error,
+    textAlign: 'center',
+    marginBottom: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  loadingIndicator: {
+    marginVertical: spacing.xl,
+  },
+  emptyText: {
+    fontSize: typography.size.sm,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginVertical: spacing.lg,
   },
   bottomSpacer: {
     height: spacing.xl,

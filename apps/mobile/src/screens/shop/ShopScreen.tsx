@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,12 +7,15 @@ import {
   TouchableOpacity,
   FlatList,
   Dimensions,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
 import { colors, spacing, typography, borderRadius, shadows } from '../../theme';
 import Card from '../../components/common/Card';
+import paymentService from '../../services/paymentService';
 
 type ShopTab = 'avatars' | 'themes' | 'powerups';
 
@@ -71,10 +74,93 @@ const ITEM_WIDTH = (width - spacing.lg * 2 - spacing.md) / 2;
 
 const ShopScreen: React.FC = () => {
   const [selectedTab, setSelectedTab] = useState<ShopTab>('avatars');
-  const coinBalance = 2450;
-  const gemBalance = 85;
+  const [items, setItems] = useState<Record<ShopTab, ShopItem[]>>(SHOP_ITEMS);
+  const [coinBalance, setCoinBalance] = useState(0);
+  const [gemBalance, setGemBalance] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [purchasing, setPurchasing] = useState(false);
 
-  const currentItems = SHOP_ITEMS[selectedTab];
+  const fetchBalance = async () => {
+    try {
+      const balance = await paymentService.getBalance();
+      setCoinBalance(balance.coins);
+      if ('gems' in balance && typeof (balance as any).gems === 'number') {
+        setGemBalance((balance as any).gems);
+      }
+    } catch (error) {
+      console.warn('Failed to fetch balance, using defaults');
+    }
+  };
+
+  const fetchProducts = async () => {
+    try {
+      const products = await paymentService.getProducts();
+      if (products && products.length > 0) {
+        const mapped: Record<ShopTab, ShopItem[]> = {
+          avatars: [],
+          themes: [],
+          powerups: [],
+        };
+        products.forEach((product) => {
+          const tab = (product.category as ShopTab) || 'powerups';
+          if (mapped[tab]) {
+            mapped[tab].push({
+              id: product.id,
+              name: product.name,
+              icon: 'cube-outline',
+              iconColor: colors.primary,
+              price: product.coins,
+              currency: 'coins',
+            });
+          }
+        });
+        const hasItems = Object.values(mapped).some((arr) => arr.length > 0);
+        if (hasItems) {
+          setItems(mapped);
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to fetch products, using default items');
+    }
+  };
+
+  useEffect(() => {
+    const initialize = async () => {
+      setLoading(true);
+      await Promise.all([fetchProducts(), fetchBalance()]);
+      setLoading(false);
+    };
+    initialize();
+  }, []);
+
+  const handlePurchase = (item: ShopItem) => {
+    if (item.isOwned) return;
+
+    Alert.alert(
+      'Confirm Purchase',
+      `Buy "${item.name}" for ${item.price} ${item.currency}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Buy',
+          onPress: async () => {
+            try {
+              setPurchasing(true);
+              await paymentService.purchase(item.id, item.price);
+              await fetchBalance();
+              Alert.alert('Success', `You purchased ${item.name}!`);
+            } catch (error: any) {
+              Alert.alert('Purchase Failed', error?.message || 'Something went wrong. Please try again.');
+            } finally {
+              setPurchasing(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const currentItems = items[selectedTab];
   const featuredItems = currentItems.filter((item) => item.isFeatured);
 
   const renderBalanceHeader = () => (

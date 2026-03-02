@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -16,23 +16,19 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { colors, spacing, typography, borderRadius, shadows } from '../../theme';
 import type { GameStackParamList } from '../../navigation/GameStack';
+import { useGameRoom } from '../../hooks/useSocket';
+import { useGameStore, type Player } from '../../store/gameStore';
+import { useAuthStore } from '../../store/authStore';
 
 type Props = NativeStackScreenProps<GameStackParamList, 'Lobby'>;
 
-interface Player {
+interface PlayerListItem {
   id: string;
   name: string;
   avatar: string;
   isReady: boolean;
   isHost: boolean;
 }
-
-const MOCK_PLAYERS: Player[] = [
-  { id: '1', name: 'Player 1', avatar: 'person-circle', isReady: true, isHost: true },
-  { id: '2', name: 'Player 2', avatar: 'person-circle', isReady: true, isHost: false },
-  { id: '3', name: 'Player 3', avatar: 'person-circle', isReady: false, isHost: false },
-  { id: '4', name: 'Player 4', avatar: 'person-circle', isReady: false, isHost: false },
-];
 
 const EMOJI_REACTIONS = ['👍', '🔥', '😎', '🎮', '⚡', '🎯'];
 
@@ -48,8 +44,14 @@ const GAME_MODE_CONFIG: Record<string, { label: string; icon: string; color: str
 const LobbyScreen: React.FC<Props> = ({ route, navigation }) => {
   const { roomId, gameMode } = route.params;
 
-  const [players, setPlayers] = useState<Player[]>(MOCK_PLAYERS);
-  const [isReady, setIsReady] = useState(false);
+  // WebSocket hook - handles joining room and subscribing to events
+  const { setReady, startGame } = useGameRoom(roomId);
+
+  // Store state
+  const room = useGameStore((state) => state.room);
+  const phase = useGameStore((state) => state.phase);
+  const userId = useAuthStore((state) => state.user?.id) || '';
+
   const [autoStartTimer, setAutoStartTimer] = useState(30);
   const [chatMessages, setChatMessages] = useState<{ id: string; name: string; emoji: string }[]>([]);
 
@@ -59,9 +61,31 @@ const LobbyScreen: React.FC<Props> = ({ route, navigation }) => {
   const dotAnim2 = useRef(new Animated.Value(0)).current;
   const dotAnim3 = useRef(new Animated.Value(0)).current;
 
+  // Derive player list from room state
+  const players: PlayerListItem[] = useMemo(() => {
+    if (!room) return [];
+    return Object.values(room.players).map((p: Player) => ({
+      id: p.userId,
+      name: p.displayName || p.username || p.userId,
+      avatar: 'person-circle',
+      isReady: p.isReady,
+      isHost: room.hostId === p.userId,
+    }));
+  }, [room]);
+
+  const isHost = room?.hostId === userId;
+  const isReady = room?.players[userId]?.isReady ?? false;
+
   const modeConfig = GAME_MODE_CONFIG[gameMode] || GAME_MODE_CONFIG['crowd-mind'];
   const readyCount = players.filter((p) => p.isReady).length;
   const canStart = readyCount >= MIN_PLAYERS;
+
+  // Navigate to ActiveGame when phase changes to 'voting'
+  useEffect(() => {
+    if (phase === 'voting') {
+      navigation.replace('ActiveGame', { roomId, gameMode });
+    }
+  }, [phase, navigation, roomId, gameMode]);
 
   // Pulse animation for ready status
   useEffect(() => {
@@ -105,9 +129,9 @@ const LobbyScreen: React.FC<Props> = ({ route, navigation }) => {
     return () => animateDots.stop();
   }, [dotAnim1, dotAnim2, dotAnim3]);
 
-  // Auto-start countdown
+  // Auto-start countdown (only for host)
   useEffect(() => {
-    if (!canStart) {
+    if (!canStart || !isHost) {
       setAutoStartTimer(30);
       return;
     }
@@ -115,14 +139,14 @@ const LobbyScreen: React.FC<Props> = ({ route, navigation }) => {
       setAutoStartTimer((prev) => {
         if (prev <= 1) {
           clearInterval(interval);
-          handleStartGame();
+          startGame();
           return 0;
         }
         return prev - 1;
       });
     }, 1000);
     return () => clearInterval(interval);
-  }, [canStart]);
+  }, [canStart, isHost, startGame]);
 
   const handleCopyRoomCode = () => {
     Clipboard.setString(roomId);
@@ -130,14 +154,11 @@ const LobbyScreen: React.FC<Props> = ({ route, navigation }) => {
   };
 
   const handleToggleReady = () => {
-    setIsReady(!isReady);
-    setPlayers((prev) =>
-      prev.map((p) => (p.id === '1' ? { ...p, isReady: !isReady } : p)),
-    );
+    setReady(!isReady);
   };
 
   const handleStartGame = () => {
-    navigation.replace('ActiveGame', { roomId, gameMode });
+    startGame();
   };
 
   const handleLeaveRoom = () => {
@@ -148,9 +169,11 @@ const LobbyScreen: React.FC<Props> = ({ route, navigation }) => {
   };
 
   const handleEmojiReaction = (emoji: string) => {
+    const currentPlayer = room?.players[userId];
+    const displayName = currentPlayer?.displayName || currentPlayer?.username || 'You';
     const newMessage = {
       id: Date.now().toString(),
-      name: 'Player 1',
+      name: displayName,
       emoji,
     };
     setChatMessages((prev) => [...prev.slice(-10), newMessage]);
@@ -160,7 +183,7 @@ const LobbyScreen: React.FC<Props> = ({ route, navigation }) => {
     return code.toUpperCase().replace(/(.{3})/g, '$1 ').trim();
   };
 
-  const renderPlayerItem = ({ item }: { item: Player }) => (
+  const renderPlayerItem = ({ item }: { item: PlayerListItem }) => (
     <View style={styles.playerCard}>
       <View style={[styles.avatarContainer, item.isReady && styles.avatarReady]}>
         <Ionicons
@@ -287,7 +310,7 @@ const LobbyScreen: React.FC<Props> = ({ route, navigation }) => {
         </View>
 
         {/* Auto-start Timer */}
-        {canStart && (
+        {canStart && isHost && (
           <View style={styles.autoStartContainer}>
             <Ionicons name="timer-outline" size={18} color={colors.secondary} />
             <Text style={styles.autoStartText}>
@@ -313,17 +336,19 @@ const LobbyScreen: React.FC<Props> = ({ route, navigation }) => {
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.startButton, !canStart && styles.startButtonDisabled]}
-            onPress={handleStartGame}
-            disabled={!canStart}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="play" size={22} color={canStart ? colors.text : colors.textMuted} />
-            <Text style={[styles.startButtonText, !canStart && styles.startButtonTextDisabled]}>
-              Start Game
-            </Text>
-          </TouchableOpacity>
+          {isHost && (
+            <TouchableOpacity
+              style={[styles.startButton, !canStart && styles.startButtonDisabled]}
+              onPress={handleStartGame}
+              disabled={!canStart}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="play" size={22} color={canStart ? colors.text : colors.textMuted} />
+              <Text style={[styles.startButtonText, !canStart && styles.startButtonTextDisabled]}>
+                Start Game
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <TouchableOpacity style={styles.leaveButton} onPress={handleLeaveRoom} activeOpacity={0.7}>

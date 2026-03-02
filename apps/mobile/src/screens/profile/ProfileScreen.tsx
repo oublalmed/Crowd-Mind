@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,6 +16,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { colors, spacing, typography, borderRadius, shadows } from '../../theme';
 import Card from '../../components/common/Card';
 import Button from '../../components/common/Button';
+import api from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import type { RootStackParamList } from '../../navigation/RootNavigator';
 
@@ -32,12 +34,6 @@ interface Achievement {
   unlocked: boolean;
 }
 
-const STATS: StatItem[] = [
-  { label: 'Games Played', value: '247', icon: 'game-controller-outline' },
-  { label: 'Win Rate', value: '68%', icon: 'trending-up-outline' },
-  { label: 'Current Streak', value: '12', icon: 'flame-outline' },
-];
-
 const ACHIEVEMENTS: Achievement[] = [
   { id: '1', name: 'First Win', icon: 'trophy', iconColor: colors.gold, unlocked: true },
   { id: '2', name: 'Speed Demon', icon: 'flash', iconColor: colors.secondary, unlocked: true },
@@ -49,23 +45,111 @@ const ACHIEVEMENTS: Achievement[] = [
   { id: '8', name: 'Social Butterfly', icon: 'people', iconColor: colors.primaryLight, unlocked: false },
 ];
 
+interface UserProfile {
+  displayName: string;
+  username: string;
+  memberSince: string;
+  level: number;
+  currentXP: number;
+  nextLevelXP: number;
+  skillRating: number;
+  skillTier: string;
+}
+
+const getSkillTier = (rating: number): string => {
+  if (rating >= 2000) return 'Diamond';
+  if (rating >= 1800) return 'Platinum';
+  if (rating >= 1600) return 'Gold II';
+  if (rating >= 1400) return 'Gold I';
+  if (rating >= 1200) return 'Silver II';
+  if (rating >= 1000) return 'Silver I';
+  return 'Bronze';
+};
+
+const formatMemberSince = (dateString: string): string => {
+  const date = new Date(dateString);
+  return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+};
+
 const ProfileScreen: React.FC = () => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const logout = useAuthStore((state) => state.logout);
+  const authUser = useAuthStore((state) => state.user);
 
-  // Mock user data
-  const user = {
-    displayName: 'Player',
-    username: 'player_one',
-    memberSince: 'January 2025',
-    level: 24,
-    currentXP: 3450,
-    nextLevelXP: 5000,
-    skillRating: 1650,
-    skillTier: 'Gold II',
-  };
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<UserProfile>({
+    displayName: authUser?.displayName ?? 'Player',
+    username: authUser?.username ?? 'player',
+    memberSince: '',
+    level: 1,
+    currentXP: 0,
+    nextLevelXP: 1000,
+    skillRating: 0,
+    skillTier: 'Bronze',
+  });
+  const [stats, setStats] = useState<StatItem[]>([
+    { label: 'Games Played', value: '0', icon: 'game-controller-outline' },
+    { label: 'Win Rate', value: '0%', icon: 'trending-up-outline' },
+    { label: 'Current Streak', value: '0', icon: 'flame-outline' },
+  ]);
 
-  const xpProgress = user.currentXP / user.nextLevelXP;
+  const fetchProfileData = useCallback(async () => {
+    try {
+      setLoading(true);
+
+      const [profileRes, statsRes] = await Promise.all([
+        api.get('/api/v1/users/me'),
+        api.get('/api/v1/users/me/stats'),
+      ]);
+
+      const profile = profileRes.data;
+      const userStats = statsRes.data;
+
+      setUser({
+        displayName: profile.displayName || authUser?.displayName || 'Player',
+        username: profile.username || authUser?.username || 'player',
+        memberSince: profile.createdAt ? formatMemberSince(profile.createdAt) : '',
+        level: profile.level ?? 1,
+        currentXP: profile.xp ?? 0,
+        nextLevelXP: ((profile.level ?? 0) + 1) * 1000,
+        skillRating: profile.skillRating ?? 0,
+        skillTier: getSkillTier(profile.skillRating ?? 0),
+      });
+
+      setStats([
+        {
+          label: 'Games Played',
+          value: String(userStats.gamesPlayed ?? 0),
+          icon: 'game-controller-outline',
+        },
+        {
+          label: 'Win Rate',
+          value: `${Math.round(userStats.winRate ?? 0)}%`,
+          icon: 'trending-up-outline',
+        },
+        {
+          label: 'Current Streak',
+          value: String(userStats.currentStreak ?? 0),
+          icon: 'flame-outline',
+        },
+      ]);
+    } catch {
+      // Fall back to authStore user data on error
+      setUser((prev) => ({
+        ...prev,
+        displayName: authUser?.displayName ?? prev.displayName,
+        username: authUser?.username ?? prev.username,
+      }));
+    } finally {
+      setLoading(false);
+    }
+  }, [authUser]);
+
+  useEffect(() => {
+    fetchProfileData();
+  }, [fetchProfileData]);
+
+  const xpProgress = user.nextLevelXP > 0 ? user.currentXP / user.nextLevelXP : 0;
 
   const handleSignOut = () => {
     Alert.alert(

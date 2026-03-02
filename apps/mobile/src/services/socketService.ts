@@ -2,38 +2,14 @@ import { io, Socket } from 'socket.io-client';
 
 const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL || 'http://localhost:8000';
 
-export interface VoteUpdate {
-  roomId: string;
-  roundId: string;
-  votes: Record<string, number>;
-  totalVotes: number;
-}
-
-export interface GameState {
-  roomId: string;
-  status: 'waiting' | 'countdown' | 'voting' | 'results' | 'finished';
-  currentRound?: number;
-  totalRounds?: number;
-  roundData?: Record<string, unknown>;
-  timeRemaining?: number;
-}
-
-export interface Player {
-  id: string;
-  username: string;
-  displayName: string;
-  avatar?: string;
-}
-
 class SocketService {
   private socket: Socket | null = null;
 
   connect(token: string): void {
-    if (this.socket?.connected) {
-      return;
-    }
+    if (this.socket?.connected) return;
 
     this.socket = io(SOCKET_URL, {
+      path: '/ws/game',
       auth: { token },
       transports: ['websocket'],
       autoConnect: true,
@@ -62,44 +38,43 @@ class SocketService {
     }
   }
 
-  joinRoom(roomId: string): void {
-    this.socket?.emit('room:join', { roomId });
+  getSocket(): Socket | null {
+    return this.socket;
   }
 
-  leaveRoom(roomId: string): void {
-    this.socket?.emit('room:leave', { roomId });
+  joinRoom(roomId: string, userId: string): void {
+    this.socket?.emit('join-room', { roomId, userId });
   }
 
-  submitVote(roomId: string, roundId: string, choice: string): void {
-    this.socket?.emit('vote:submit', { roomId, roundId, choice });
+  leaveRoom(roomId: string, userId: string): void {
+    this.socket?.emit('leave-room', { roomId, userId });
   }
 
-  onVoteUpdate(callback: (data: VoteUpdate) => void): () => void {
-    this.socket?.on('vote:update', callback);
+  setReady(roomId: string, userId: string, isReady: boolean): void {
+    this.socket?.emit('player-ready', { roomId, userId, isReady });
+  }
+
+  startGame(roomId: string): void {
+    this.socket?.emit('start-game', { roomId });
+  }
+
+  submitVote(roomId: string, userId: string, choice: string): void {
+    this.socket?.emit('submit-vote', { roomId, userId, choice });
+  }
+
+  nextRound(roomId: string): void {
+    this.socket?.emit('next-round', { roomId });
+  }
+
+  on(event: string, callback: (...args: any[]) => void): () => void {
+    this.socket?.on(event, callback);
     return () => {
-      this.socket?.off('vote:update', callback);
+      this.socket?.off(event, callback);
     };
   }
 
-  onGameStateChange(callback: (data: GameState) => void): () => void {
-    this.socket?.on('game:state', callback);
-    return () => {
-      this.socket?.off('game:state', callback);
-    };
-  }
-
-  onPlayerJoined(callback: (player: Player) => void): () => void {
-    this.socket?.on('player:joined', callback);
-    return () => {
-      this.socket?.off('player:joined', callback);
-    };
-  }
-
-  onPlayerLeft(callback: (player: Player) => void): () => void {
-    this.socket?.on('player:left', callback);
-    return () => {
-      this.socket?.off('player:left', callback);
-    };
+  off(event: string, callback: (...args: any[]) => void): void {
+    this.socket?.off(event, callback);
   }
 }
 
